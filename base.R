@@ -1,0 +1,169 @@
+library(data.table)
+library(ggplot2)
+library(stringr)
+library(ggpubr)
+library(animation)
+library(kableExtra)
+
+games <- fread('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-03-16/games.csv')
+games_alt <- fread("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-07-30/video_games.csv")
+
+games_merged <- merge(games, games_alt, by.x = "gamename", by.y = "game", all.x = TRUE)
+#games_merged <- games_merged[complete.cases(games_merged$release_date)]
+
+#str(games_merged)
+# we may need simple transformations to make our life easier.
+games_merged$month <- factor(games_merged$month, levels = month.name)
+games_merged[, avg_peak_perc := as.numeric(str_remove(avg_peak_perc, "%"))/100]
+games_merged$release_year <- str_sub(games_merged$release_date, 
+                                     str_count(games_merged$release_date) - 3, str_count(games_merged$release_date) )
+games_merged$release_year <- as.numeric(games_merged$release_year)
+
+kable(games_merged[, as.list(summary(avg)), by = year], format = "html", digits = 2, caption = "Summary of Average Gamer Count")  
+
+kable(games_merged[, as.list(summary(peak)), by = year], format = "html", digits = 2, caption = "Summary of Peak Gamer Count")  
+
+# When we take a look at the yearly summary of the gaming data, we can see that the avg and peak values 
+# are extremely skewed. The right tail is rather long. It is not surprising to see this since we should
+# expect some of the games to dominate the gaming world. There should be also many games that have failed
+# to peak the interest of gamers. Therefore, averages misses important information if we are to make
+# an analysis of the data we have. We should focus on the extremes.
+
+avg_gamers <- ggplot(games_merged[, max(avg)/10^6, by = year], aes(x = year, y = V1)) + geom_col() + 
+  ylab("Gamers in millions") + xlab("Year") + labs(title = "Average Gamer Count in Simultaneous Gaming") +
+  theme_bw()
+max_gamers <- ggplot(games_merged[, max(peak)/10^6, by = year], aes(x = year, y = V1)) + geom_col() + 
+  ylab("Gamers in millions") + xlab("Year") + labs(title = "Maximum Gamer Count in Simultaneous Gaming") +
+  theme_bw()
+
+ggarrange(avg_gamers, max_gamers, ncol = 2, nrow = 1)
+
+# We can see that the maximum of average and peak gamer counts resembles each other throughout the years.
+# The obvious peak is on 2017 and 2018 and except these two years, averages seems to show a steady increase.
+# We can now take a look at the monthly figures and then try to figure out the most played games in our dataset.
+
+games_merged$gaming_date <- lubridate::dmy(paste(1, games_merged$month, games_merged$year))
+
+max_gamers_monthly <- ggplot(games_merged[, max(peak)/10^6, by = gaming_date], aes(x = gaming_date, y = V1)) + 
+  geom_col() + ylab("Gamers in millions") + xlab("Month") + labs(title = "Maximum Gamer Count in Simultaneous Gaming") +
+  theme_bw()
+
+avg_gamers_monthly <- ggplot(games_merged[, max(avg)/10^6, by = gaming_date], aes(x = gaming_date, y = V1)) + 
+  geom_col() + ylab("Gamers in millions") + xlab("Month") + labs(title = "Average Gamer Count in Simultaneous Gaming") +
+  theme_bw()
+
+ggarrange(avg_gamers_monthly, max_gamers_monthly, ncol = 2, nrow = 1)
+
+# Monthly figures shows a similar outcome. However the monthly variance seems to be rather high. It doesn't
+# seem to follow a strong seasonal pattern but we should investigate further. 
+# I would guess the monthly spikes we see from now and then causes by new releases. But in order to 
+# understand what is going on, we should take a better look at the most played games at these dates.
+
+games_merged[avg > 200000, unique(gamename)]
+
+games_merged[, .SD[which.max(peak)], by = year][order(-year)][, 
+            .(gamename, peak, gaming_date, release_date)]
+
+games_merged[, .SD[which.max(avg)], by = year][order(-year)][, 
+            .(gamename, avg, gaming_date, release_date)]
+
+# The above information suggests that the top games that drives the peak and average numbers we see are
+# Counter-Strike, Dota 2, PUBG and less so the Cyberpunk and Fallout 4. Note that Fallout and Cyberpunk are
+# singleplayer games and they tend to have a lower concentration of players on a given time since they
+# don't require cooperation of any kind. Something else that we could point out is that PUBG's success
+# seems to come just after the release of the game and shwos a steady decline in the following months.
+# Dota 2 on the other hand seems to have built its fan base over the years. 
+
+my_plot.decomposed.ts = function(x, title="", ...) {
+  xx <- x$x
+  if (is.null(xx)) 
+    xx <- with(x, if (type == "additive") 
+      random + trend + seasonal
+      else random * trend * seasonal)
+  plot(cbind(observed = xx, trend = x$trend, seasonal = x$seasonal, random = x$random), 
+       main=title, ...)
+}
+
+cs_ts <- ts(games_merged[gamename ==  "Counter-Strike: Global Offensive", .(gaming_date,peak)][order(gaming_date)]$peak,
+            frequency = 12, start = c(2012,7))
+decompsoed_cs <- decompose(cs_ts)
+
+pubg_ts <- ts(games_merged[gamename ==  "PLAYERUNKNOWN'S BATTLEGROUNDS", .(gaming_date,peak)][order(gaming_date)]$peak,
+            frequency = 12, start = c(2012,7))
+decompsoed_pubg <- decompose(pubg_ts)
+
+dota_ts <- ts(games_merged[gamename ==  "Dota 2", .(gaming_date,peak)][order(gaming_date)]$peak,
+            frequency = 12, start = c(2012,7))
+decompsoed_dota <- decompose(dota_ts)
+
+my_plot.decomposed.ts(decompsoed_cs, title = "Counter-Strike")
+my_plot.decomposed.ts(decompsoed_pubg, title = "PUBG")
+my_plot.decomposed.ts(decompsoed_dota, title = "Dota 2")
+# If we take look at the seasonal changes in our data, we can also see that there is a slight seasonality
+# for our games. The major effect is due to the time trend but we also see a very
+# slight increase in peak gamer counts in Counter-Strike around Spring and around Summer in PUBG and around the 
+# late Winter in Dota 2. The effects are rather small but it may be still worthwhile to mention them.
+
+monthly_avg <- games_merged[, .SD[which.max(avg)], by = gaming_date][order(-gaming_date)][, 
+                                                             .(gamename, avg, gaming_date, release_date)]
+
+monthly_avg_plot <- ggplot(monthly_avg, aes(x = gaming_date, y = avg, fill = gamename)) + geom_col() + theme_bw() + 
+  ylab("Gamers in millions") + xlab("Month") + labs(title = "Average Gamer Count in Simultaneous Gaming", 
+                                                    fill = "Games") + 
+  scale_fill_brewer(type = "qual", palette = "Set1") + theme_bw()
+
+# The above graph shows the difference in maximum average gamer count per month from 2012 to 2021. 
+# We have seen the values but we didn't checked which games were actually played at these dates. 
+# Adding color as an extra dimension offers us a nice and easy visualization to this end. 
+
+
+games_merged$release_dummy <- ifelse(games_merged$release_year < 2010, "pre-2010", games_merged$release_year)
+
+peak_combined <- ggplot(games_merged[, .SD[which.max(peak)], 
+                                    by = .(year, gamename)][, .(gamename, peak, year, release_dummy)],
+                       aes(x = year, y = peak/10^6, color = release_dummy )) + 
+  geom_point() + scale_color_brewer(palette = "Paired") + 
+  ylab("Gamers in millions") + xlab("Year") + labs(color = "Release Year", 
+  title = "Maximum number of gamers per game over the years")
+
+avg_combined <- ggplot(games_merged[, .SD[which.max(avg)], 
+                                     by = .(year, gamename)][, .(gamename, avg, year, release_dummy)],
+                        aes(x = year, y = avg/10^6, color = release_dummy )) + 
+  geom_point() + scale_color_brewer(palette = "Paired") + 
+  ylab("Gamers in millions") + xlab("Year") + labs(color = "Release Year", 
+                                                   title = "Average number of gamers per game over the years")
+ggarrange(avg_combined, peak_combined, ncol = 2, nrow = 1)
+
+## This is another representation of the playtime PUBG (released at 2017) enjoys over the years.
+## We can also see Dota's (released at 2013) prominence over the years as well as Counter-Strike's 
+## (released at 2012) comeback. There are many games that are below the 200.000 average gamer
+## count at the same time and between 100.000 and 200.000, we can see some familiar names
+## such as Fallout 4, Cyberpunk 2077, Civilization 5, GTA 5, Rust and Terraria. 
+
+## I will speculate here that the interest on PUBG was arguably exogenous. Namely, new gamers' seem to have 
+## started playing the game on 2017 and 2018 (perhaps changed platforms)
+## and leave the scene after their interest has burned out (Perhaps returned to their otherwise favourite gaming
+## platform). The other most obvious result is the dominance of multiplayer games for our metrics. If we 
+## keep looking at maximum average and peak player count at a given time, we will most likely keep seeing
+## multiplayer or co-op games. If we were to check the total amount of playtime, singleplayer games might had
+## had a shot, especially when they were first released. 
+
+
+
+## So far, I haven't directly pointed out to the relationship between avg and peak values of a game
+## at a given time. But they usually follow a percentage point relationship that is also given to us as a variable.
+## This percentage point seems to be around 0.42 on average throughout our dataset and this translates
+## into a slope of roughly 1/2 if we plot peak on the x axis and avg on the y axis. 
+## As a final task, I will try to visualize what happens to individual games' avg and peak numbers
+## month over month with also plotting the gain variable to see the differences in the avg variable vis-a-vis the
+## past month.
+
+ani.options(interval = 1)
+saveGIF({
+  for(i in as.character(sort(unique(games_merged$gaming_date)))) {
+    print(ggplot(games_merged[gaming_date == i], aes(peak/10^6, avg/10^6)) + 
+      geom_point(aes(color = gain)) + geom_smooth(method = "lm", se = FALSE) + 
+      scale_color_distiller(palette = "Spectral") + ylab("Average Number of Players (in mm)") + 
+      xlab("Maximum Number of Players (in mm)") +  labs(title = i) + theme_bw())
+  }
+})
