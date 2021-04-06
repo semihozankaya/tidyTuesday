@@ -12,7 +12,7 @@ library(ggplot2)
 library(stringr)
 library(ggpubr)
 library(animation)
-library(gifski)
+library(kableExtra)
 
 ```
 
@@ -35,22 +35,23 @@ games_merged[, avg_peak_perc := as.numeric(str_remove(avg_peak_perc, "%"))/100]
 games_merged$release_year <- str_sub(games_merged$release_date, 
                                      str_count(games_merged$release_date) - 3, str_count(games_merged$release_date) )
 games_merged$release_year <- as.numeric(games_merged$release_year)
+games_merged$gaming_date <- lubridate::dmy(paste(1, games_merged$month, games_merged$year))
 ```
 
-```{r, results = 'asis'}
-kable(games_merged[, as.list(summary(avg)), by = year], format = "html", digits = 2, caption = "Summary of Average Gamer Count")  
+```{r}
+kable(as.data.frame(games_merged[, as.list(summary(avg)), by = year]), format = "html", digits = 2, caption = "Summary of Average Gamer Count")  %>% kable_styling()
 
-kable(games_merged[, as.list(summary(peak)), by = year], format = "html", digits = 2, caption = "Summary of Peak Gamer Count")  
+kable(as.data.frame(games_merged[, as.list(summary(peak)), by = year]), format = "html", digits = 2, caption = "Summary of Peak Gamer Count")  %>% kable_styling()
 ```
 
 We can see below that the maximum of average and peak gamer counts resembles each other throughout the years. The obvious peak is on 2017 and 2018 and except these two years, averages seems to show a steady increase. We can now take a look at the monthly figures and then try to figure out the most played games in our dataset.
 
 ```{r}
 avg_gamers <- ggplot(games_merged[, max(avg)/10^6, by = year], aes(x = year, y = V1)) + geom_col() + 
-  ylab("Gamers in millions") + xlab("Year") + labs(title = "Average Gamer Count in Simultaneous Gaming") +
+  ylab("Gamers in millions") + xlab("Year") + labs(title = "Average Gamer Count") +
   theme_bw()
 max_gamers <- ggplot(games_merged[, max(peak)/10^6, by = year], aes(x = year, y = V1)) + geom_col() + 
-  ylab("Gamers in millions") + xlab("Year") + labs(title = "Maximum Gamer Count in Simultaneous Gaming") +
+  ylab("Gamers in millions") + xlab("Year") + labs(title = "Maximum Gamer Count") +
   theme_bw()
 
 ggarrange(avg_gamers, max_gamers, ncol = 2, nrow = 1)
@@ -63,13 +64,13 @@ Monthly figures shows a similar outcome below. However the monthly variance seem
 
 ## Games
 
-```{r, results='asis'}
+```{r}
 
 kable(games_merged[, .SD[which.max(peak)], by = year][order(-year)][, 
-            .(gamename, peak, gaming_date, release_date)], format = "html", digits = 2, caption = "Peak Gamer Cout per Year")
+            .(gamename, peak, gaming_date, release_date)], format = "html", digits = 2, caption = "Peak Gamer Cout per Year") %>% kable_styling()
 
 kable(games_merged[, .SD[which.max(avg)], by = year][order(-year)][, 
-            .(gamename, avg, gaming_date, release_date)], format = "html", digits = 2, caption = "Average Gamer Count per Year")
+            .(gamename, avg, gaming_date, release_date)], format = "html", digits = 2, caption = "Average Gamer Count per Year") %>% kable_styling()
 
 ```
 
@@ -79,7 +80,7 @@ The above information suggests that the top games that drives the peak and avera
 monthly_avg <- games_merged[, .SD[which.max(avg)], by = gaming_date][order(-gaming_date)][, 
                                                              .(gamename, avg, gaming_date, release_date)]
 
-monthly_avg_plot <- ggplot(monthly_avg, aes(x = gaming_date, y = avg, fill = gamename)) + geom_col() + theme_bw() + 
+monthly_avg_plot <- ggplot(monthly_avg, aes(x = gaming_date, y = avg/10^6, fill = gamename)) + geom_col() + theme_bw() + 
   ylab("Gamers in millions") + xlab("Month") + labs(title = "Average Gamer Count in Simultaneous Gaming", 
                                                     fill = "Games") + 
   scale_fill_brewer(type = "qual", palette = "Set1") + theme_bw()
@@ -98,14 +99,14 @@ peak_combined <- ggplot(games_merged[, .SD[which.max(peak)],
                        aes(x = year, y = peak/10^6, color = release_dummy )) + 
   geom_point() + scale_color_brewer(palette = "Paired") + 
   ylab("Gamers in millions") + xlab("Year") + labs(color = "Release Year", 
-  title = "Maximum number of gamers per game over the years")
+  title = "Maximum number of gamers/game")
 
 avg_combined <- ggplot(games_merged[, .SD[which.max(avg)], 
                                      by = .(year, gamename)][, .(gamename, avg, year, release_dummy)],
                         aes(x = year, y = avg/10^6, color = release_dummy )) + 
   geom_point() + scale_color_brewer(palette = "Paired") + 
   ylab("Gamers in millions") + xlab("Year") + labs(color = "Release Year", 
-                                                   title = "Average number of gamers per game over the years")
+                                                   title = "Average number of gamers/game")
 ggarrange(avg_combined, peak_combined, ncol = 2, nrow = 1)
 
 
@@ -123,20 +124,21 @@ I will speculate here that the interest on PUBG was arguably exogenous. Namely, 
 So far, I haven't directly pointed out to the relationship between avg and peak values of a game at a given time. But they usually follow a percentage point relationship that is also given to us as a variable. This percentage point seems to be around 0.42 on average throughout our dataset and this translates into a slope of roughly 1/2 if we plot peak on the x axis and avg on the y axis.  As an additional task, I will try to visualize what happens to individual games' avg and peak numbers month over month with also plotting the gain variable to see the differences in the avg variable vis-a-vis the past month.
 
 
+<img src="https://raw.githubusercontent.com/semihozankaya/tidyTuesday/master/animation.gif" width="400" height="400" />
 
-```{r, include= FALSE}
-ani.options(interval = 1)
-saveGIF({
-  for(i in as.character(sort(unique(games_merged$gaming_date)))) {
-    print(ggplot(games_merged[gaming_date == i], aes(peak/10^6, avg/10^6)) + 
-      geom_point(aes(color = gain)) + geom_smooth(method = "lm", se = FALSE) + 
-      scale_color_distiller(palette = "Spectral") + ylab("Average Number of Players (in mm)") + 
-      xlab("Maximum Number of Players (in mm)") +  labs(title = i) + theme_bw())
-  }
-})
+
+```{r}
+# ani.options(interval = 1)
+# saveGIF({
+#  for(i in as.character(sort(unique(games_merged$gaming_date)))) {
+#    print(ggplot(games_merged[gaming_date == i], aes(peak/10^6, avg/10^6)) + 
+#      geom_point(aes(color = gain)) + geom_smooth(method = "lm", se = FALSE) + 
+#      scale_color_distiller(palette = "Spectral") + ylab("Average Number of Players (in mm)") + 
+#      xlab("Maximum Number of Players (in mm)") +  labs(title = i) + theme_bw())}})
 # gganimate fails due to some dependency problems. I opt to produce an animation instead.
 
 ```
+
 
 ## Appendix 2
 
